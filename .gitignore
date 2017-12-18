@@ -1,3 +1,6 @@
 TCPServer/TCPServer/obj
 TCPServer/TCPServer/bin
 TCPServer/.vs
+TCPClient/TCPClient/bin
+TCPClient/TCPClient/obj
+TCPClient/.vs
