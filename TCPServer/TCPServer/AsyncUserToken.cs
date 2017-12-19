@@ -28,12 +28,6 @@ namespace TCPServer
         public DateTime ConnectTime { get; set; }
 
         /// <summary>  
-        /// 所属用户信息  
-        /// </summary>  
-        //public UserInfoModel UserInfo { get; set; }
-
-
-        /// <summary>  
         /// 数据缓存区  
         /// </summary>  
         public List<byte> Buffer { get; set; }

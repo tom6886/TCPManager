@@ -29,7 +29,6 @@ namespace TCPServer
 
         // Assigns a buffer from the buffer pool to the   
         // specified SocketAsyncEventArgs object  
-        //  
         // <returns>true if the buffer was successfully set, else false</returns>  
         public bool SetBuffer(SocketAsyncEventArgs args)
         {
