@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
@@ -8,16 +9,13 @@ namespace TCPServer
 {
     public class SocketManager
     {
-        private int m_maxConnectNum;    //最大连接数  
-        private int m_revBufferSize;    //最大接收字节数  
+        private SocketConfig Config;
         BufferManager m_bufferManager;
-        const int opsToAlloc = 2;
         Socket listenSocket;            //监听Socket  
-        SocketEventPool m_pool;
+        ConcurrentDictionary<int, SocketAsyncEventArgs> m_pool;
         int m_clientCount;              //连接的客户端数量  
         Semaphore m_maxNumberAcceptedClients;
-
-        List<AsyncUserToken> m_clients; //客户端列表  
+        ConcurrentBag<AsyncUserToken> m_clients; //客户端列表  
 
         #region 定义委托  
 
@@ -56,26 +54,19 @@ namespace TCPServer
         /// <summary>  
         /// 获取客户端列表  
         /// </summary>  
-        public List<AsyncUserToken> ClientList { get { return m_clients; } }
+        public ConcurrentBag<AsyncUserToken> ClientList { get { return m_clients; } }
 
         #endregion
 
-        /// <summary>  
-        /// 构造函数  
-        /// </summary>  
-        /// <param name="numConnections">最大连接数</param>  
-        /// <param name="receiveBufferSize">缓存区大小</param>  
-        public SocketManager(int numConnections, int receiveBufferSize)
+        public SocketManager(SocketConfig config)
         {
-            m_clientCount = 0;
-            m_maxConnectNum = numConnections;
-            m_revBufferSize = receiveBufferSize;
-            // allocate buffers such that the maximum number of sockets can have one outstanding read and   
-            //write posted to the socket simultaneously    
-            m_bufferManager = new BufferManager(receiveBufferSize * numConnections * opsToAlloc, receiveBufferSize);
+            Config = config;
 
-            m_pool = new SocketEventPool(numConnections);
-            m_maxNumberAcceptedClients = new Semaphore(numConnections, numConnections);
+            m_bufferManager = new BufferManager(Config.MaxBytesNumber, Config.MaxBufferSize);
+
+            m_pool = new ConcurrentDictionary<int, SocketAsyncEventArgs>();
+
+            m_maxNumberAcceptedClients = new Semaphore(Config.MaxConnectCount, Config.MaxConnectCount);
         }
 
         /// <summary>  
@@ -86,21 +77,7 @@ namespace TCPServer
             // Allocates one large byte buffer which all I/O operations use a piece of.  This gaurds   
             // against memory fragmentation  
             m_bufferManager.InitBuffer();
-            m_clients = new List<AsyncUserToken>();
-            // preallocate pool of SocketAsyncEventArgs objects  
-            SocketAsyncEventArgs readWriteEventArg;
-
-            for (int i = 0; i < m_maxConnectNum; i++)
-            {
-                readWriteEventArg = new SocketAsyncEventArgs();
-                readWriteEventArg.Completed += new EventHandler<SocketAsyncEventArgs>(IO_Completed);
-                readWriteEventArg.UserToken = new AsyncUserToken();
-
-                // assign a byte buffer from the buffer pool to the SocketAsyncEventArg object  
-                m_bufferManager.SetBuffer(readWriteEventArg);
-                // add SocketAsyncEventArg to the pool  
-                m_pool.Push(readWriteEventArg);
-            }
+            m_clients = new ConcurrentBag<AsyncUserToken>();
         }
 
 
@@ -108,15 +85,15 @@ namespace TCPServer
         /// 启动服务  
         /// </summary>  
         /// <param name="localEndPoint"></param>  
-        public bool Start(IPEndPoint localEndPoint)
+        public bool Start()
         {
             try
             {
-                m_clients.Clear();
-                listenSocket = new Socket(localEndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-                listenSocket.Bind(localEndPoint);
+                m_clients = new ConcurrentBag<AsyncUserToken>();
+                listenSocket = new Socket(Config.EndPoint.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                listenSocket.Bind(Config.EndPoint);
                 // start the server with a listen backlog of 100 connections  
-                listenSocket.Listen(m_maxConnectNum);
+                listenSocket.Listen(Config.MaxConnectCount);
                 // post accepts on the listening socket  
                 StartAccept(null);
                 return true;
@@ -148,7 +125,7 @@ namespace TCPServer
 
             listenSocket.Close();
             int c_count = m_clients.Count;
-            lock (m_clients) { m_clients.Clear(); }
+            m_clients = new ConcurrentBag<AsyncUserToken>();
 
             if (ClientNumberChange != null)
                 ClientNumberChange(-c_count, null);
@@ -204,14 +181,22 @@ namespace TCPServer
                 Interlocked.Increment(ref m_clientCount);
                 // Get the socket for the accepted client connection and put it into the   
                 //ReadEventArg object user token  
-                SocketAsyncEventArgs readEventArgs = m_pool.Pop();
-                AsyncUserToken userToken = (AsyncUserToken)readEventArgs.UserToken;
+                SocketAsyncEventArgs readEventArgs = new SocketAsyncEventArgs();
+                readEventArgs.Completed += new EventHandler<SocketAsyncEventArgs>(IO_Completed);
+                // assign a byte buffer from the buffer pool to the SocketAsyncEventArg object
+                m_bufferManager.SetBuffer(readEventArgs);
+
+                AsyncUserToken userToken = new AsyncUserToken();
                 userToken.Socket = e.AcceptSocket;
                 userToken.ConnectTime = DateTime.Now;
                 userToken.Remote = e.AcceptSocket.RemoteEndPoint;
                 userToken.IPAddress = ((IPEndPoint)(e.AcceptSocket.RemoteEndPoint)).Address;
 
-                lock (m_clients) { m_clients.Add(userToken); }
+                readEventArgs.UserToken = userToken;
+
+                m_pool.TryAdd(((IPEndPoint)(e.AcceptSocket.RemoteEndPoint)).GetHashCode(), readEventArgs);
+
+                m_clients.Add(userToken);
 
                 if (ClientNumberChange != null)
                     ClientNumberChange(1, userToken);
@@ -342,7 +327,7 @@ namespace TCPServer
         {
             AsyncUserToken token = e.UserToken as AsyncUserToken;
 
-            lock (m_clients) { m_clients.Remove(token); }
+            m_clients.TryTake(out token);
             //如果有事件,则调用事件,发送客户端数量变化通知  
             if (ClientNumberChange != null)
                 ClientNumberChange(-1, token);
@@ -358,7 +343,7 @@ namespace TCPServer
             m_maxNumberAcceptedClients.Release();
             // Free the SocketAsyncEventArg so they can be reused by another client  
             e.UserToken = new AsyncUserToken();
-            m_pool.Push(e);
+            m_pool.TryRemove(((IPEndPoint)(e.AcceptSocket.RemoteEndPoint)).GetHashCode(), out e);
         }
 
 

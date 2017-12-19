@@ -20,11 +20,18 @@ namespace TCPServer
                     case "TCP":
                         try
                         {
-                            SocketManager m_socket = new SocketManager(200, 1024);
+                            SocketConfig config = new SocketConfig()
+                            {
+                                MaxConnectCount = 200,
+                                MaxBufferSize = 1024,
+                                EndPoint = new IPEndPoint(IPAddress.Parse("127.0.0.1"), 13909)
+                            };
+
+                            SocketManager m_socket = new SocketManager(config);
 
                             m_socket.Init();
 
-                            m_socket.Start(new IPEndPoint(IPAddress.Parse("127.0.0.1"), 13909));
+                            m_socket.Start();
 
                             m_socket.ReceiveClientData += M_socket_ReceiveClientData;
 
