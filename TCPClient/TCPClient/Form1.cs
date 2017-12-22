@@ -1,18 +1,15 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Linq;
+using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Windows.Forms;
+using TCPHandler;
 
 namespace TCPClient
 {
     public partial class Form1 : DevExpress.XtraEditors.XtraForm
     {
-        static SocketManager smanager = null;
+        SocketClient smanager = null;
         public Form1()
         {
             InitializeComponent();
@@ -27,9 +24,13 @@ namespace TCPClient
         {
             if (string.IsNullOrWhiteSpace(edit_ip.Text) || string.IsNullOrWhiteSpace(edit_port.Text)) { MessageBox.Show("请先填入IP和Port"); return; }
 
-            SocketError res = Connect(edit_ip.Text, Convert.ToInt16(edit_port.Text));
+            if (Convert.ToInt16(edit_port.Text) <= 1000) { MessageBox.Show("端口号必须大于1000"); return; }
 
-            if (res == 0) { memoEdit1.MaskBox.AppendText("连接成功"); return; }
+            IPEndPoint endPoint = new IPEndPoint(IPAddress.Parse(edit_ip.Text), Convert.ToInt16(edit_port.Text));
+
+            SocketError res = Connect(endPoint);
+
+            if (res == 0) { memoEdit1.MaskBox.AppendText("连接成功\r\n"); return; }
 
             memoEdit1.MaskBox.AppendText("连接失败，错误码：" + res);
         }
@@ -38,81 +39,75 @@ namespace TCPClient
         {
             if (string.IsNullOrWhiteSpace(memoEdit2.Text)) { MessageBox.Show("请输入发送内容"); return; }
 
-            Send(memoEdit2.Text);
+            smanager.Send(memoEdit2.Text);
         }
-
-        #region 属性
-        public static bool Connected
-        {
-            get { return smanager != null && smanager.Connected; }
-        }
-
-        #endregion
 
         #region 方法
 
-        public static SocketError Connect(string ip, int port)
+        public SocketError Connect(IPEndPoint endPoint)
         {
-            if (Connected) return SocketError.Success;
-
-            if (string.IsNullOrWhiteSpace(ip) || port <= 1000) return SocketError.Fault;
+            if (smanager != null && smanager.Connected) return SocketError.Success;
 
             //创建连接对象, 连接到服务器  
-            smanager = new SocketManager(ip, port);
+            smanager = new SocketClient(endPoint);
+
             SocketError error = smanager.Connect();
+
             if (error == SocketError.Success)
             {
                 //连接成功后,就注册事件. 最好在成功后再注册.  
-                smanager.ServerDataHandler += OnReceivedServerData;
-                smanager.ServerStopEvent += OnServerStopEvent;
+                smanager.OnMsgReceived += Smanager_OnMsgReceived;
+                smanager.GetPackageLength += Smanager_GetPackageLength;
+                smanager.GetSendMessage += Smanager_GetSendMessage;
+                smanager.OnSended += Smanager_OnSended;
             }
             return error;
         }
 
-        /// <summary>  
-        /// 发送消息  
-        /// </summary>  
-        /// <param name="message">消息实体</param>  
-        /// <returns>True.已发送; False.未发送</returns>  
-        public static bool Send(string message)
+        private void Smanager_OnSended(bool successorfalse)
         {
-            if (!Connected) return false;
-
-            byte[] buff = Encoding.UTF8.GetBytes(message);
-            //加密,根据自己的需要可以考虑把消息加密  
-            //buff = AESEncrypt.Encrypt(buff, m_aesKey);  
-            smanager.Send(buff);
-            return true;
+            SetMemoText(successorfalse ? "发送消息成功\r\n" : "发送消息失败\r\n");
         }
 
-
-        /// <summary>  
-        /// 发送字节流  
-        /// </summary>  
-        /// <param name="buff"></param>  
-        /// <returns></returns>  
-        static bool Send(byte[] buff)
+        private byte[] Smanager_GetSendMessage(string msg)
         {
-            if (!Connected) return false;
-            smanager.Send(buff);
-            return true;
+            if (smanager == null || !smanager.Connected) { MessageBox.Show("未连接到服务端，请重新连接"); return null; };
+
+            byte[] sendBuffer = Encoding.UTF8.GetBytes(msg);
+
+            byte[] buff = new byte[sendBuffer.Length + 4];
+            Array.Copy(BitConverter.GetBytes(sendBuffer.Length), buff, 4);
+            Array.Copy(sendBuffer, 0, buff, 4, sendBuffer.Length);
+
+            return buff;
         }
 
-        /// <summary>  
-        /// 接收消息  
-        /// </summary>  
-        /// <param name="buff"></param>  
-        private static void OnReceivedServerData(byte[] buff)
+        private int Smanager_GetPackageLength(byte[] data, out int headLength)
         {
-
+            headLength = 4;
+            byte[] lenBytes = new byte[4];
+            Array.Copy(data, lenBytes, 4);
+            int packageLen = BitConverter.ToInt32(lenBytes, 0);
+            return packageLen;
         }
 
-        /// <summary>  
-        /// 服务器已断开  
-        /// </summary>  
-        private static void OnServerStopEvent()
+        private void Smanager_OnMsgReceived(byte[] info)
         {
+            SetMemoText("接收到服务端的消息：" + Encoding.UTF8.GetString(info) + "\r\n");
+        }
 
+        private delegate void setMemoText(string str);
+
+        private void SetMemoText(string str)
+        {
+            if (memoEdit1.InvokeRequired)
+            {
+                BeginInvoke(new setMemoText(SetMemoText), str);
+            }
+            else
+            {
+                memoEdit1.MaskBox.AppendText(str);
+            }
         }
         #endregion
     }

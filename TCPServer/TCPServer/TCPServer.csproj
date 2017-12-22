@@ -42,7 +42,7 @@
     <Reference Include="System.Net.Http" />
     <Reference Include="System.Xml" />
     <Reference Include="TCPHandler, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
-      <HintPath>..\packages\XTCPHandler.1.0.0\lib\TCPHandler.dll</HintPath>
+      <HintPath>..\packages\XTCPHandler.1.0.2\lib\TCPHandler.dll</HintPath>
       <Private>True</Private>
     </Reference>
   </ItemGroup>

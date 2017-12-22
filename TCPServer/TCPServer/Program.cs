@@ -18,7 +18,7 @@ namespace TCPServer
 
                 switch (com)
                 {
-                    case "NEWTCP":
+                    case "TCP":
                         try
                         {
                             listener = new SocketListener(200, 1024);
@@ -34,6 +34,10 @@ namespace TCPServer
                             listener.GetPackageLength += Listener_GetPackageLength;
 
                             listener.OnMsgReceived += Listener_OnMsgReceived;
+
+                            listener.GetSendMessage += Listener_GetSendMessage;
+
+                            listener.OnSended += Listener_OnSended;
                         }
                         catch (Exception ex)
                         {
@@ -63,15 +67,34 @@ namespace TCPServer
             } while (com.ToUpper() != "EXIT");
         }
 
-        private static void Listener_OnMsgReceived(TCPHandler.AsyncUserToken token, byte[] info)
+        private static void Listener_OnSended(AsyncUserToken token, System.Net.Sockets.SocketError error)
+        {
+            Console.WriteLine("已回馈消息：");
+            Console.WriteLine(" 来源IP：" + token.Remote.Address.ToString());
+        }
+
+        private static byte[] Listener_GetSendMessage(string msg)
+        {
+            byte[] sendBuffer = Encoding.UTF8.GetBytes(msg);
+
+            byte[] buff = new byte[sendBuffer.Length + 4];
+            Array.Copy(BitConverter.GetBytes(sendBuffer.Length), buff, 4);
+            Array.Copy(sendBuffer, 0, buff, 4, sendBuffer.Length);
+
+            return buff;
+        }
+
+        private static void Listener_OnMsgReceived(AsyncUserToken token, byte[] info)
         {
             Console.WriteLine("接收到数据：");
             Console.WriteLine(" 来源IP：" + token.Remote.Address.ToString());
             Console.WriteLine(" 连接时间：" + token.ConnectTime.ToString());
             Console.WriteLine(" 内容：" + Encoding.UTF8.GetString(info));
+
+            listener.Send(token.UID, "已接收到消息：" + Encoding.UTF8.GetString(info));
         }
 
-        private static void Listener_OnClientNumberChange(int number, TCPHandler.AsyncUserToken token)
+        private static void Listener_OnClientNumberChange(int number, AsyncUserToken token)
         {
             Console.WriteLine(number > 0 ? "有设备接入" : "有设备断开");
             Console.WriteLine(" 来源IP：" + token.Remote.Address.ToString());
